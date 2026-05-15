@@ -518,11 +518,11 @@
     <div class="grid md:grid-cols-2 gap-5">
       <div class="card">
         <h3 class="text-sm font-semibold text-adlabs-text mb-3">Daily CPC vs RPC</h3>
-        <div style="position:relative; height:260px;"><canvas id="chartDowCpcRpc"></canvas></div>
+        <div style="position:relative; height:260px;"><canvas id="chartDowCpcRpc" height="260"></canvas></div>
       </div>
       <div class="card">
         <h3 class="text-sm font-semibold text-adlabs-text mb-3">Daily ACOS</h3>
-        <div style="position:relative; height:260px;"><canvas id="chartDowAcos"></canvas></div>
+        <div style="position:relative; height:260px;"><canvas id="chartDowAcos" height="260"></canvas></div>
       </div>
     </div>
   </div>
@@ -557,11 +557,11 @@
     <div class="grid md:grid-cols-2 gap-5">
       <div class="card">
         <h3 class="text-sm font-semibold text-adlabs-text mb-3">Hourly CPC vs RPC</h3>
-        <div style="position:relative; height:260px;"><canvas id="chartHodCpcRpc"></canvas></div>
+        <div style="position:relative; height:260px;"><canvas id="chartHodCpcRpc" height="260"></canvas></div>
       </div>
       <div class="card">
         <h3 class="text-sm font-semibold text-adlabs-text mb-3">Hourly ACOS</h3>
-        <div style="position:relative; height:260px;"><canvas id="chartHodAcos"></canvas></div>
+        <div style="position:relative; height:260px;"><canvas id="chartHodAcos" height="260"></canvas></div>
       </div>
     </div>
   </div>
@@ -1170,7 +1170,8 @@ function renderParseSummary() {
     if (!allMax || f.maxDate > allMax) allMax = f.maxDate;
   });
   var campNames = new Set();
-  ok.forEach(function(f){ f.rows.forEach(function(r){ if (r.campName) campNames.add(r.campName); }); });
+  // Count campaigns from allRows (works for both real and restored stub files)
+  allRows.forEach(function(r){ if (r.campName) campNames.add(r.campName); });
 
   $('sumRows').textContent = totalRows.toLocaleString();
   $('sumCurrency').textContent = currencies.length > 1
@@ -1193,6 +1194,12 @@ function renderParseSummary() {
 }
 
 function mergeRows() {
+  // Only merge if files have real row data (not restored stubs)
+  // Stubs have empty arrays; real parsed files have actual row objects with campName etc.
+  var hasRealRows = files.some(function(f) {
+    return f.status === 'ok' && f.rows.length > 0 && f.rows[0] && typeof f.rows[0] === 'object' && f.rows[0].campName !== undefined;
+  });
+  if (!hasRealRows) return; // allRows already restored from localStorage
   allRows = [];
   files.forEach(function(f) {
     if (f.status === 'ok') {
@@ -1278,6 +1285,10 @@ function switchSub(name) {
   });
   if (name === 'heat') renderHeatmap();
   if (name === 'bids') renderBids();
+  // Charts need the canvas to be visible to get dimensions — defer with rAF
+  if (name === 'dow' || name === 'hod') {
+    setTimeout(function() { renderCharts(); }, 50);
+  }
 }
 
 function goToAnalysis() {
@@ -2261,7 +2272,8 @@ function renderAll() {
   renderHourOfDay();
   renderHeatmap();
   renderBids();
-  renderCharts();
+  // Defer chart rendering so canvas elements are visible and have dimensions
+  setTimeout(function() { renderCharts(); }, 50);
 }
 
 // ===============================================
@@ -2294,6 +2306,9 @@ function makeDualAxisChart(canvasId, labels, datasets, axes) {
     if (fmt === 'pct') return fmtPct(v, 1);
     return fmtDec(v, 2);
   }
+  // Ensure canvas has explicit dimensions before Chart.js touches it
+  ctx.width  = ctx.parentElement ? ctx.parentElement.offsetWidth  || 600 : 600;
+  ctx.height = 260;
   chartInstances[canvasId] = new Chart(ctx, {
     type: 'line',
     data: { labels: labels, datasets: datasets },
@@ -2302,7 +2317,7 @@ function makeDualAxisChart(canvasId, labels, datasets, axes) {
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: { position: 'bottom', labels: { font: { family: 'Inter', size: 11 }, boxWidth: 12, padding: 10 } },
+        legend: { position: 'bottom', labels: { font: { family: 'system-ui', size: 11 }, boxWidth: 12, padding: 10 } },
         tooltip: {
           callbacks: {
             label: function(ctx) {
@@ -2314,23 +2329,27 @@ function makeDualAxisChart(canvasId, labels, datasets, axes) {
         }
       },
       scales: {
-        x: { ticks: { font: { family: 'Inter', size: 10 } }, grid: { display: false } },
+        x: { ticks: { font: { family: 'system-ui', size: 10 } }, grid: { display: false } },
         y:  {
           type: 'linear', position: 'left', beginAtZero: true,
-          title: { display: !!axes.left.title, text: axes.left.title, font: { family: 'Inter', size: 10 }, color: '#64748b' },
-          ticks: { font: { family: 'Inter', size: 10 }, callback: tickCb(axes.left.format) },
+          title: { display: !!axes.left.title, text: axes.left.title, font: { family: 'system-ui', size: 10 }, color: '#64748b' },
+          ticks: { font: { family: 'system-ui', size: 10 }, callback: tickCb(axes.left.format) },
           grid: { color: '#f1f5f9' }
         },
         y1: {
           type: 'linear', position: 'right', beginAtZero: true,
-          title: { display: !!axes.right.title, text: axes.right.title, font: { family: 'Inter', size: 10 }, color: '#64748b' },
-          ticks: { font: { family: 'Inter', size: 10 }, callback: tickCb(axes.right.format) },
+          title: { display: !!axes.right.title, text: axes.right.title, font: { family: 'system-ui', size: 10 }, color: '#64748b' },
+          ticks: { font: { family: 'system-ui', size: 10 }, callback: tickCb(axes.right.format) },
           grid: { drawOnChartArea: false } // avoid dual grid-line clutter
         }
       },
       elements: { point: { radius: 3, hoverRadius: 5 } }
     }
   });
+  // Force resize after creation so chart fills container correctly
+  setTimeout(function() {
+    if (chartInstances[canvasId]) chartInstances[canvasId].resize();
+  }, 100);
   return chartInstances[canvasId];
 }
 
@@ -2567,21 +2586,21 @@ function renderExportCharts() {
         animation: false,
         devicePixelRatio: 2,
         plugins: {
-          title: { display: true, text: title, font: { family: 'Inter', size: 16, weight: 'bold' }, color: '#0f172a' },
-          legend: { position: 'bottom', labels: { font: { family: 'Inter', size: 12 }, boxWidth: 14, padding: 12 } }
+          title: { display: true, text: title, font: { family: 'system-ui', size: 16, weight: 'bold' }, color: '#0f172a' },
+          legend: { position: 'bottom', labels: { font: { family: 'system-ui', size: 12 }, boxWidth: 14, padding: 12 } }
         },
         scales: {
-          x: { ticks: { font: { family: 'Inter', size: 11 } }, grid: { display: false } },
+          x: { ticks: { font: { family: 'system-ui', size: 11 } }, grid: { display: false } },
           y:  {
             type: 'linear', position: 'left', beginAtZero: true,
-            title: { display: !!axes.left.title, text: axes.left.title, font: { family: 'Inter', size: 11 }, color: '#475569' },
-            ticks: { font: { family: 'Inter', size: 11 }, callback: tick(axes.left.format) },
+            title: { display: !!axes.left.title, text: axes.left.title, font: { family: 'system-ui', size: 11 }, color: '#475569' },
+            ticks: { font: { family: 'system-ui', size: 11 }, callback: tick(axes.left.format) },
             grid: { color: '#e2e8f0' }
           },
           y1: {
             type: 'linear', position: 'right', beginAtZero: true,
-            title: { display: !!axes.right.title, text: axes.right.title, font: { family: 'Inter', size: 11 }, color: '#475569' },
-            ticks: { font: { family: 'Inter', size: 11 }, callback: tick(axes.right.format) },
+            title: { display: !!axes.right.title, text: axes.right.title, font: { family: 'system-ui', size: 11 }, color: '#475569' },
+            ticks: { font: { family: 'system-ui', size: 11 }, callback: tick(axes.right.format) },
             grid: { drawOnChartArea: false }
           }
         },
@@ -3095,11 +3114,14 @@ function restoreClientState(state) {
   allRows = state.allRows || [];
   filteredRows = allRows.slice();
   detectedCurrency = state.detectedCurrency || null;
+  // Restore file metadata with a proper rows array stub so renderParseSummary
+  // can call both .length and .forEach without crashing
   files = (state.files || []).map(function(f) {
+    var stubRows = new Array(f.rowCount || 0);
     return {
       name: f.name, status: f.status || 'ok', warnings: f.warnings || [],
       currency: f.currency, minDate: f.minDate, maxDate: f.maxDate,
-      rows: { length: f.rowCount || 0 }
+      rows: stubRows
     };
   });
 }
