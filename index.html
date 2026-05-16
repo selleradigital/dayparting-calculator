@@ -154,7 +154,23 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   .tab-active { border-bottom: 2px solid #2563eb; color: #0f172a; font-weight: 600; }
   .tab-inactive { border-bottom: 2px solid transparent; color: #64748b; }
   .tab-inactive:hover { color: #475569; border-bottom-color: #e2e8f0; }
-  .subtab-active { background: #eff6ff; color: #2563eb; border-color: #bfdbfe; }
+  .hday-pill {
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 20px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #64748b;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.hday-active {
+  background: #1e3a5f;
+  color: #fff;
+  border-color: #1e3a5f;
+}
+.subtab-active { background: #eff6ff; color: #2563eb; border-color: #bfdbfe; }
   .subtab-inactive { background: #fff; color: #475569; border-color: #e2e8f0; }
   .subtab-inactive:hover { background: #f8fafc; color: #0f172a; }
   .fade-in { animation: fadeIn 0.2s ease-in; }
@@ -578,6 +594,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     <button onclick="switchSub(&#39;hod&#39;)" id="sub-hod" class="subtab-inactive px-4 py-2 text-xs font-medium rounded-lg border transition">Hour of Day</button>
     <button onclick="switchSub(&#39;heat&#39;)" id="sub-heat" class="subtab-inactive px-4 py-2 text-xs font-medium rounded-lg border transition">168-Hour Heatmaps</button>
     <button onclick="switchSub(&#39;bids&#39;)" id="sub-bids" class="subtab-inactive px-4 py-2 text-xs font-medium rounded-lg border transition">Bid Recommendations</button>
+    <button onclick="switchSub(&#39;hourly&#39;)" id="sub-hourly" class="subtab-inactive px-4 py-2 text-xs font-medium rounded-lg border transition">Hourly Summary</button>
   </div>
 
   <!-- Day of Week -->
@@ -825,6 +842,49 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       </div>
     </div>
   </div>
+
+  <!-- Hourly Summary Panel -->
+  <div id="sub-panel-hourly" class="hidden">
+    <div class="card">
+      <div class="flex flex-wrap items-end gap-4 mb-4">
+        <div>
+          <h3 class="text-sm font-semibold text-adlabs-text">Spend &amp; Sales by Hour of Day</h3>
+          <p class="text-xs text-adlabs-text-muted mt-1">Aggregated across all days in the filtered dataset</p>
+        </div>
+        <div class="ml-auto flex flex-wrap gap-3 items-end">
+          <div>
+            <label class="text-xs text-adlabs-text-muted block mb-1">Break down by</label>
+            <div class="select-wrap">
+              <select id="hourlySummaryBreakdown" onchange="onHourlyBreakdownChange()">
+                <option value="all">All Days Combined</option>
+                <option value="dow">By Day of Week</option>
+              </select>
+            </div>
+          </div>
+          <div id="hourlySummaryDayFilterWrap" class="hidden">
+            <label class="text-xs text-adlabs-text-muted block mb-1">Days to show</label>
+            <div class="flex flex-wrap gap-1" id="hourlySummaryDayPills">
+              <button onclick="toggleHourlyDay(1)" id="hday-1" class="hday-pill hday-active">Mon</button>
+              <button onclick="toggleHourlyDay(2)" id="hday-2" class="hday-pill hday-active">Tue</button>
+              <button onclick="toggleHourlyDay(3)" id="hday-3" class="hday-pill hday-active">Wed</button>
+              <button onclick="toggleHourlyDay(4)" id="hday-4" class="hday-pill hday-active">Thu</button>
+              <button onclick="toggleHourlyDay(5)" id="hday-5" class="hday-pill hday-active">Fri</button>
+              <button onclick="toggleHourlyDay(6)" id="hday-6" class="hday-pill hday-active">Sat</button>
+              <button onclick="toggleHourlyDay(0)" id="hday-0" class="hday-pill hday-active">Sun</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="scroll-x">
+        <table class="data-table" id="tblHourlySummary">
+          <thead></thead>
+          <tbody></tbody>
+          <tfoot></tfoot>
+        </table>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 </main>
@@ -1391,7 +1451,7 @@ function switchTab(name) {
 
 function switchSub(name) {
   currentSub = name;
-  ['dow', 'hod', 'heat', 'bids'].forEach(function(s) {
+  ['dow', 'hod', 'heat', 'bids', 'hourly'].forEach(function(s) {
     var btn = $('sub-' + s);
     var panel = $('sub-panel-' + s);
     if (!btn || !panel) return;
@@ -1407,6 +1467,7 @@ function switchSub(name) {
   });
   if (name === 'heat') renderHeatmap();
   if (name === 'bids') renderBids();
+  if (name === 'hourly') renderHourlySummary();
   // Charts need the canvas to be visible to get dimensions — defer with rAF
   if (name === 'dow' || name === 'hod') {
     setTimeout(function() { renderCharts(); }, 50);
@@ -2218,6 +2279,216 @@ function hasEnoughClicks(bucket, threshold) {
 }
 
 
+
+// ===============================================
+// RENDER: HOURLY SUMMARY (Spend & Sales by Hour)
+// ===============================================
+
+// Track which days are active (all on by default)
+var hourlyActiveDays = [1,2,3,4,5,6,0]; // Mon-Sun
+
+function onHourlyBreakdownChange() {
+  var mode = document.getElementById('hourlySummaryBreakdown').value;
+  var wrap = document.getElementById('hourlySummaryDayFilterWrap');
+  if (wrap) wrap.classList.toggle('hidden', mode !== 'dow');
+  renderHourlySummary();
+}
+
+function toggleHourlyDay(dow) {
+  var idx = hourlyActiveDays.indexOf(dow);
+  if (idx > -1) {
+    // Don't allow deselecting all days
+    if (hourlyActiveDays.length === 1) return;
+    hourlyActiveDays.splice(idx, 1);
+  } else {
+    hourlyActiveDays.push(dow);
+  }
+  // Update pill appearance
+  var btn = document.getElementById('hday-' + dow);
+  if (btn) {
+    btn.classList.toggle('hday-active', hourlyActiveDays.indexOf(dow) > -1);
+  }
+  renderHourlySummary();
+}
+
+function renderHourlySummary() {
+  var tbl = document.getElementById('tblHourlySummary');
+  if (!tbl) return;
+
+  var breakdown = document.getElementById('hourlySummaryBreakdown');
+  var mode = breakdown ? breakdown.value : 'all';
+
+  var DAY_SHORT = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  var DAY_ORDER = [1,2,3,4,5,6,0]; // Mon-Sun display order
+
+  // Sequential color scale: red (low) → white (mid) → dark green (high)
+  function heatColor(v, minV, maxV) {
+    if (!isFinite(v) || v <= 0 || maxV === minV) return '';
+    var t = (v - minV) / (maxV - minV); // 0 = min, 1 = max
+    var red   = [220, 38,  38 ]; // tailwind red-600
+    var white = [255, 255, 255];
+    var green = [21,  128, 61 ]; // tailwind green-700
+    var c;
+    if (t < 0.5) {
+      var tt = t * 2;
+      c = [
+        Math.round(red[0] + (white[0]-red[0]) * tt),
+        Math.round(red[1] + (white[1]-red[1]) * tt),
+        Math.round(red[2] + (white[2]-red[2]) * tt)
+      ];
+    } else {
+      var tt2 = (t - 0.5) * 2;
+      c = [
+        Math.round(white[0] + (green[0]-white[0]) * tt2),
+        Math.round(white[1] + (green[1]-white[1]) * tt2),
+        Math.round(white[2] + (green[2]-white[2]) * tt2)
+      ];
+    }
+    return 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')';
+  }
+
+  // Pick contrasting text color for colored cells
+  function textColor(bg) {
+    if (!bg) return '';
+    var m = bg.match(/rgb\((\d+),(\d+),(\d+)\)/);
+    if (!m) return '';
+    var lum = 0.299 * m[1] + 0.587 * m[2] + 0.114 * m[3];
+    return lum > 160 ? '#1e293b' : '#ffffff';
+  }
+
+  function coloredCell(v, minV, maxV, display) {
+    var bg = heatColor(v, minV, maxV);
+    if (!bg) return '<td>' + display + '</td>';
+    var tc = textColor(bg);
+    return '<td style="background:' + bg + ';color:' + tc + ';font-weight:500;">' + display + '</td>';
+  }
+
+  if (mode === 'all') {
+    var thead = '<tr>'
+      + '<th>Hour</th><th>Impressions</th><th>Clicks</th>'
+      + '<th>Spend</th><th>Sales</th><th>Orders</th>'
+      + '<th>ACOS</th><th>RPC</th><th>CPC</th><th>CVR</th>'
+      + '</tr>';
+    tbl.querySelector('thead').innerHTML = thead;
+
+    // Pre-collect buckets for all 24 hours
+    var hourBuckets = [];
+    var totals = { impressions:0, clicks:0, orders:0, spend:0, sales:0 };
+    for (var h = 0; h < 24; h++) {
+      var b = totalBucket(filteredRows.filter(function(r){ return r.hour === h; }));
+      hourBuckets.push(b);
+      totals.impressions += b.impressions;
+      totals.clicks      += b.clicks;
+      totals.orders      += b.orders;
+      totals.spend       += b.spend;
+      totals.sales       += b.sales;
+    }
+
+    // Min/max for spend and sales across all hours
+    var spendVals = hourBuckets.map(function(b){ return b.spend; }).filter(function(v){ return v > 0; });
+    var salesVals = hourBuckets.map(function(b){ return b.sales; }).filter(function(v){ return v > 0; });
+    var minSpend = spendVals.length ? Math.min.apply(null, spendVals) : 0;
+    var maxSpend = spendVals.length ? Math.max.apply(null, spendVals) : 0;
+    var minSales = salesVals.length ? Math.min.apply(null, salesVals) : 0;
+    var maxSales = salesVals.length ? Math.max.apply(null, salesVals) : 0;
+
+    var rows = '';
+    for (var h2 = 0; h2 < 24; h2++) {
+      var b2 = hourBuckets[h2];
+      var m2 = calcMetrics(b2);
+      var label = String(h2).padStart(2,'0') + ':00';
+      rows += '<tr>'
+        + '<td>' + label + '</td>'
+        + '<td>' + fmtInt(b2.impressions) + '</td>'
+        + '<td>' + fmtInt(b2.clicks) + '</td>'
+        + coloredCell(b2.spend, minSpend, maxSpend, fmtMoney(b2.spend))
+        + coloredCell(b2.sales, minSales, maxSales, fmtMoney(b2.sales))
+        + '<td>' + fmtInt(b2.orders) + '</td>'
+        + '<td>' + (isFinite(m2.acos) ? fmtPct(m2.acos) : '—') + '</td>'
+        + '<td>' + (isFinite(m2.rpc) && m2.rpc > 0 ? fmtMoney(m2.rpc) : '—') + '</td>'
+        + '<td>' + (isFinite(m2.cpc) && m2.cpc > 0 ? fmtMoney(m2.cpc) : '—') + '</td>'
+        + '<td>' + (isFinite(m2.cvr) ? fmtPct(m2.cvr, 1) : '—') + '</td>'
+        + '</tr>';
+    }
+    tbl.querySelector('tbody').innerHTML = rows;
+
+    var tm = calcMetrics(totals);
+    tbl.querySelector('tfoot').innerHTML = '<tr style="font-weight:600;">'
+      + '<td>Total</td>'
+      + '<td>' + fmtInt(totals.impressions) + '</td>'
+      + '<td>' + fmtInt(totals.clicks) + '</td>'
+      + '<td>' + fmtMoney(totals.spend) + '</td>'
+      + '<td>' + fmtMoney(totals.sales) + '</td>'
+      + '<td>' + fmtInt(totals.orders) + '</td>'
+      + '<td>' + (isFinite(tm.acos) ? fmtPct(tm.acos) : '—') + '</td>'
+      + '<td>' + (isFinite(tm.rpc) && tm.rpc > 0 ? fmtMoney(tm.rpc) : '—') + '</td>'
+      + '<td>' + (isFinite(tm.cpc) && tm.cpc > 0 ? fmtMoney(tm.cpc) : '—') + '</td>'
+      + '<td>' + (isFinite(tm.cvr) ? fmtPct(tm.cvr, 1) : '—') + '</td>'
+      + '</tr>';
+
+  } else {
+    // By Day of Week — only show selected days
+    var activeDays = DAY_ORDER.filter(function(d) { return hourlyActiveDays.indexOf(d) > -1; });
+
+    var thead2 = '<tr><th>Hour</th>';
+    activeDays.forEach(function(d) { thead2 += '<th colspan="2">' + DAY_SHORT[d] + '</th>'; });
+    thead2 += '<th colspan="2">Total</th></tr>';
+
+    var subhead = '<tr><th></th>';
+    activeDays.forEach(function() { subhead += '<th>Spend</th><th>Sales</th>'; });
+    subhead += '<th>Spend</th><th>Sales</th></tr>';
+    tbl.querySelector('thead').innerHTML = thead2 + subhead;
+
+    // Pre-compute all cell values to find global min/max for spend and sales
+    var allSpend = [], allSales = [];
+    for (var hr = 0; hr < 24; hr++) {
+      activeDays.forEach(function(dow) {
+        var b3 = totalBucket(filteredRows.filter(function(r){ return r.hour === hr && r.dow === dow; }));
+        if (b3.spend > 0) allSpend.push(b3.spend);
+        if (b3.sales > 0) allSales.push(b3.sales);
+      });
+    }
+    var minSp = allSpend.length ? Math.min.apply(null, allSpend) : 0;
+    var maxSp = allSpend.length ? Math.max.apply(null, allSpend) : 0;
+    var minSa = allSales.length ? Math.min.apply(null, allSales) : 0;
+    var maxSa = allSales.length ? Math.max.apply(null, allSales) : 0;
+
+    var bodyRows = '';
+    var colTotals = {};
+    activeDays.forEach(function(d) { colTotals[d] = { spend:0, sales:0 }; });
+    var grandSpend = 0, grandSales = 0;
+
+    for (var hr2 = 0; hr2 < 24; hr2++) {
+      var label2 = String(hr2).padStart(2,'0') + ':00';
+      bodyRows += '<tr><td>' + label2 + '</td>';
+      var rowSpend = 0, rowSales = 0;
+      activeDays.forEach(function(dow) {
+        var b4 = totalBucket(filteredRows.filter(function(r){ return r.hour === hr2 && r.dow === dow; }));
+        colTotals[dow].spend += b4.spend;
+        colTotals[dow].sales += b4.sales;
+        rowSpend += b4.spend;
+        rowSales += b4.sales;
+        bodyRows += coloredCell(b4.spend, minSp, maxSp, b4.spend > 0 ? fmtMoney(b4.spend) : '—');
+        bodyRows += coloredCell(b4.sales, minSa, maxSa, b4.sales > 0 ? fmtMoney(b4.sales) : '—');
+      });
+      grandSpend += rowSpend;
+      grandSales += rowSales;
+      bodyRows += '<td><strong>' + fmtMoney(rowSpend) + '</strong></td>'
+                + '<td><strong>' + fmtMoney(rowSales) + '</strong></td>';
+      bodyRows += '</tr>';
+    }
+    tbl.querySelector('tbody').innerHTML = bodyRows;
+
+    var foot = '<tr style="font-weight:600;"><td>Total</td>';
+    activeDays.forEach(function(dow) {
+      foot += '<td>' + fmtMoney(colTotals[dow].spend) + '</td>'
+            + '<td>' + fmtMoney(colTotals[dow].sales) + '</td>';
+    });
+    foot += '<td>' + fmtMoney(grandSpend) + '</td><td>' + fmtMoney(grandSales) + '</td></tr>';
+    tbl.querySelector('tfoot').innerHTML = foot;
+  }
+}
+
 // ===============================================
 // RENDER: 168-HOUR BID ADJUSTMENT HEATMAP
 // ===============================================
@@ -2479,6 +2750,7 @@ function renderAll() {
   renderHourOfDay();
   renderHeatmap();
   renderBids();
+  renderHourlySummary();
   // Defer chart rendering so canvas elements are visible and have dimensions
   setTimeout(function() { renderCharts(); }, 50);
 }
