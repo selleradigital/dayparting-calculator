@@ -756,6 +756,36 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       </div>
     </div>
 
+    <!-- Bid Adjustment Heatmap -->
+    <div class="card" id="bidAdjHeatmapCard">
+      <h3 class="text-sm font-semibold text-adlabs-text mb-1 flex items-center justify-between">
+        <span>Recommended Bid Adjustments — 168-Hour Heatmap</span>
+        <span class="text-xs font-normal text-adlabs-text-muted">Based on RPC vs. average RPC</span>
+      </h3>
+      <p class="text-xs text-adlabs-text-muted mb-3">Each cell shows the recommended bid adjustment for that day/hour slot. Green = increase bids, red = decrease. <span style="background:#fefce8;border-radius:3px;padding:1px 4px;font-style:italic;color:#f59e0b;border:1px solid #fde68a;">!</span> = low data, treat with caution.</p>
+      <div class="scroll-x">
+        <table id="tblBidAdjHeatmap" style="border-collapse:collapse;font-size:11px;min-width:900px;">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="flex items-center gap-4 mt-3" style="font-size:11px;color:#64748b;">
+        <span>Scale:</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;">
+          <span style="display:inline-block;width:12px;height:12px;background:#e67c73;border-radius:2px;"></span> Decrease bids
+        </span>
+        <span style="display:inline-flex;align-items:center;gap:6px;">
+          <span style="display:inline-block;width:12px;height:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:2px;"></span> No change (avg)
+        </span>
+        <span style="display:inline-flex;align-items:center;gap:6px;">
+          <span style="display:inline-block;width:12px;height:12px;background:#57bb8a;border-radius:2px;"></span> Increase bids
+        </span>
+        <span style="display:inline-flex;align-items:center;gap:6px;">
+          <span style="background:#fefce8;border-radius:3px;padding:1px 4px;font-style:italic;color:#f59e0b;font-size:10px;border:1px solid #fde68a;">!</span> Low data
+        </span>
+      </div>
+    </div>
+
     <!-- FULL-WIDTH BELOW: Custom Blocks -->
     <div class="card">
       <h3 class="text-sm font-semibold text-adlabs-text mb-3 flex items-center justify-between">
@@ -2187,6 +2217,88 @@ function hasEnoughClicks(bucket, threshold) {
   return bucket.clicks >= threshold;
 }
 
+
+// ===============================================
+// RENDER: 168-HOUR BID ADJUSTMENT HEATMAP
+// ===============================================
+function renderBidAdjHeatmap() {
+  var tbl = document.getElementById('tblBidAdjHeatmap');
+  if (!tbl) return;
+
+  var grid = buildHeatmapGrid();       // grid[dow][hour] = bucket
+  var minClicks = minClicksRequired();
+  var totalB = totalBucket(filteredRows);
+  var overallRpc = calcMetrics(totalB).rpc;
+
+  // Collect all valid (enough-data) RPC values to scale the color gradient
+  var vals = [];
+  DAY_ORDER_WEEK.forEach(function(dow) {
+    for (var h = 0; h < 24; h++) {
+      var b = grid[dow][h];
+      if (!hasEnoughClicks(b, minClicks)) return;
+      var rpc = calcMetrics(b).rpc;
+      if (isFinite(rpc) && rpc > 0) vals.push(rpc);
+    }
+  });
+
+  // Use a SYMMETRIC scale centered on overallRpc.
+  // Find the max deviation from average and use that as the full range,
+  // so green and red both appear equally in the gradient.
+  var maxDeviation = 0;
+  vals.forEach(function(v) {
+    var dev = Math.abs(v - overallRpc);
+    if (dev > maxDeviation) maxDeviation = dev;
+  });
+  if (maxDeviation === 0) maxDeviation = overallRpc * 0.5 || 1;
+  var minRpc = overallRpc - maxDeviation;
+  var maxRpc = overallRpc + maxDeviation;
+
+  // Build header row
+  var thead = '<tr><th style="background:#f8fafc;padding:4px 6px;text-align:left;border:1px solid #e2e8f0;white-space:nowrap;font-weight:600;">Day \ Hour</th>';
+  for (var h = 0; h < 24; h++) {
+    thead += '<th style="background:#f8fafc;padding:4px 5px;text-align:center;border:1px solid #e2e8f0;min-width:46px;font-weight:500;">' + String(h).padStart(2,'0') + '</th>';
+  }
+  thead += '</tr>';
+  tbl.querySelector('thead').innerHTML = thead;
+
+  // Build body rows
+  var tbody = '';
+  DAY_ORDER_WEEK.forEach(function(dow) {
+    var dayShort = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dow];
+    tbody += '<tr>';
+    tbody += '<td style="background:#f8fafc;padding:4px 8px;border:1px solid #e2e8f0;font-weight:600;white-space:nowrap;">' + dayShort + '</td>';
+    for (var hr = 0; hr < 24; hr++) {
+      var b = grid[dow][hr];
+      var enough = hasEnoughClicks(b, minClicks);
+      var rpc = calcMetrics(b).rpc;
+      var adj = bidAdj(rpc, overallRpc, false, 0); // no cap, RPC-based
+      var adjPct = adj * 100;
+
+      if (!enough) {
+        // Low data cell — grayed out with yellow ! flag
+        var clicks = b ? b.clicks : 0;
+        var adjStr = (isFinite(adjPct) && (b && b.clicks > 0)) ? ((adjPct >= 0 ? '+' : '') + adjPct.toFixed(0) + '%') : '0%';
+        tbody += '<td style="background:#f8fafc;color:#94a3b8;text-align:center;padding:4px 2px;border:1px solid #e2e8f0;font-style:italic;" '
+               + 'title="Low data: ' + clicks + ' click(s). Treat with caution.">'
+               + '<span style="font-size:9px;vertical-align:super;color:#f59e0b;">!</span>'
+               + adjStr + '</td>';
+      } else {
+        // Color the cell using the same diverging scale as other heatmaps
+        var bg = scaleDivergingCentered(rpc, minRpc, overallRpc, maxRpc, 'high');
+        // Text color: white on dark backgrounds, dark on light
+        var textClr = '#1e293b';
+        var sign = adjPct > 0 ? '+' : '';
+        var label = (isFinite(adjPct) ? (adjPct === 0 ? '0%' : sign + adjPct.toFixed(0) + '%') : '0%');
+        tbody += '<td style="background:' + bg + ';text-align:center;padding:4px 2px;border:1px solid #e2e8f0;font-weight:600;color:' + textClr + ';" '
+               + 'title="RPC: ' + (isFinite(rpc) ? rpc.toFixed(2) : '—') + ' | Avg: ' + (isFinite(overallRpc) ? overallRpc.toFixed(2) : '—') + ' | Adj: ' + label + '">'
+               + label + '</td>';
+      }
+    }
+    tbody += '</tr>';
+  });
+  tbl.querySelector('tbody').innerHTML = tbody;
+}
+
 function renderBids() {
   var metric = $('bidMetric').value;
   var invert = metric === 'ACOS';
@@ -2256,6 +2368,9 @@ function renderBids() {
 
   // Custom blocks
   renderCustomBlocks(metric, overall, minClicks, invert, bidRowHtml);
+
+  // 168-hour bid adjustment heatmap
+  renderBidAdjHeatmap();
 }
 
 // ===============================================
